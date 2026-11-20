@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Product Availability · KGPL{% endblock %}
+{% block content %}
+<h1>Product Availability at Source</h1>
+<p class="sub">Enter available quantity (MT) by Source and OMC. Daily Demand cannot exceed this.</p>
+{% if user.role == 'source' %}
+<div class="alert {{ 'a-ok' if mod_ok else 'a-e' }}">
+  <strong>{{ 'Edit window OPEN' if mod_ok else 'Edit window LOCKED' }}</strong> — {{ mod_msg }}<br>
+  <small>Effective window: {{ effective_window }} · Now: {{ now_ist_str }}</small>
+</div>
+{% endif %}
+<div class="sec">
+  <h2>Set / Update Availability</h2>
+  {% if user.role == 'source' and not mod_ok %}
+  <p style="color:#991b1b;font-weight:600;margin-bottom:.75rem">You cannot set availability right now. Please try between 12:00 and 21:00 IST.</p>
+  {% endif %}
+  <form method="post">
+    <div class="frm">
+      <div class="fg">
+        <label>Source *</label>
+        <select name="source" required {% if user.role=='source' %}disabled{% endif %}>
+          {% for s in allowed_sources %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+        {% if user.role=='source' %}<input type="hidden" name="source" value="{{ user.source }}">{% endif %}
+      </div>
+      <div class="fg">
+        <label>OMC *</label>
+        <select name="omc" required>
+          {% for o in OMCS %}<option value="{{ o }}">{{ o }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="fg">
+        <label>Available Qty (MT) *</label>
+        <input type="number" name="qty" step="0.001" min="0" required placeholder="e.g. 1000">
+      </div>
+      <div class="fg">
+        <label>Effective Date</label>
+        <input type="date" name="date" value="{{ today }}">
+      </div>
+    </div>
+    {% if user.role == 'source' and not mod_ok %}
+    <button class="btn btn-p" type="button" disabled style="opacity:.5">Save Availability (Locked)</button>
+    {% else %}
+    <button class="btn btn-p" type="submit">Save Availability</button>
+    {% endif %}
+  </form>
+</div>
+<div class="sec">
+  <h2>Current Product Availability</h2>
+  <div class="date-bar">
+    <form method="get" style="display:flex;gap:.5rem;align-items:center">
+      <label>Filter by Date:</label>
+      <input type="date" name="date" value="{{ date_f }}">
+      <button class="btn btn-p btn-sm" type="submit">Apply</button>
+      <a class="btn btn-sm" style="background:#64748b" href="{{ url_for('availability') }}">All</a>
+    </form>
+  </div>
+  <table>
+    <thead><tr><th>Source</th><th>OMC</th><th>Available (MT)</th><th>Booked (MT)</th><th>Balance (MT)</th><th>Date</th>{% if user.role=='master' %}<th>Action</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for a in rows %}
+      {% set b = booked.get((a.source, a.omc, a.date), 0) %}
+      {% set bal = a.qty - b %}
+      <tr>
+        <td>{{ a.source }}</td>
+        <td><strong>{{ a.omc }}</strong></td>
+        <td>{{ '%.2f'|format(a.qty) }}</td>
+        <td>{{ '%.2f'|format(b) }}</td>
+        <td style="{{ 'color:#dc2626;font-weight:700' if bal<0 else '' }}">{{ '%.2f'|format(bal) }}</td>
+        <td>{{ a.date }}</td>
+        {% if user.role=='master' %}
+        <td>
+          <form method="post" action="{{ url_for('delete_availability', aid=a.id) }}" style="display:inline" onsubmit="return confirm('Delete?')">
+            <button class="btn btn-e btn-sm" type="submit">Del</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="7" style="text-align:center">No records</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="sec">
+  <h2>Source-wise Availability Matrix (Latest)</h2>
+  <table>
+    <thead><tr><th>Source</th><th>IOCL (MT)</th><th>BPCL (MT)</th><th>HPCL (MT)</th><th>Total (MT)</th></tr></thead>
+    <tbody>
+    {% for s in SOURCES %}
+      {% set r = matrix[s] %}
+      <tr>
+        <td><strong>{{ s }}</strong></td>
+        <td>{{ '%.2f'|format(r.IOCL) }}</td>
+        <td>{{ '%.2f'|format(r.BPCL) }}</td>
+        <td>{{ '%.2f'|format(r.HPCL) }}</td>
+        <td><strong>{{ '%.2f'|format(r.IOCL+r.BPCL+r.HPCL) }}</strong></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

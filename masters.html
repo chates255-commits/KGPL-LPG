@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Masters · KGPL{% endblock %}
+{% block content %}
+<h1>Master Data</h1>
+<p class="sub">Plants, Sources & User management</p>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+  <div class="sec">
+    <h2>Bottling Plants</h2>
+    <table>
+      <thead><tr><th>#</th><th>Plant</th><th>OMC</th><th>Region</th></tr></thead>
+      <tbody>
+      {% for p in PLANTS %}
+        <tr><td>{{ loop.index }}</td><td>{{ p[0] }}</td><td>{{ p[1] }}</td><td>{{ p[2] }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="sec">
+    <h2>Sources</h2>
+    <table>
+      <thead><tr><th>#</th><th>Source</th></tr></thead>
+      <tbody>
+      {% for s in SOURCES %}
+        <tr><td>{{ loop.index }}</td><td>{{ s }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="sec">
+  <h2>Users & Password Reset</h2>
+  <table>
+    <thead><tr><th>Role</th><th>Name</th><th>User ID</th><th>Scope</th><th>Reset Password</th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.role }}</td>
+        <td>{{ u.name }}</td>
+        <td><code>{{ u.id }}</code></td>
+        <td>{{ u.plant or u.source or 'All' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('reset_password') }}" style="display:flex;gap:.3rem;align-items:center">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <input type="password" name="new_pass" placeholder="New password" minlength="6" required style="padding:.25rem;width:130px;font-size:.8rem">
+            <button class="btn btn-p btn-sm" type="submit">Reset</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

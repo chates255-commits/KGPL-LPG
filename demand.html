@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Daily Demand · KGPL{% endblock %}
+{% block content %}
+<h1>Daily Demand Entry</h1>
+<p class="sub">Select plant → only connected sources. Actual next day. Cannot exceed source availability.</p>
+{% if user.role == 'plant' %}
+<div class="alert {{ 'a-ok' if mod_ok else 'a-e' }}">
+  <strong>{{ 'Edit window OPEN' if mod_ok else 'Edit window LOCKED' }}</strong> — {{ mod_msg }}<br>
+  <small>Effective window: {{ effective_window }} · Now: {{ now_ist_str }}</small>
+</div>
+{% endif %}
+<div class="sec">
+  <h2>Submit New Demand</h2>
+  {% if user.role == 'plant' and not mod_ok %}
+  <p style="color:#991b1b;font-weight:600;margin-bottom:.75rem">You cannot submit or modify demand right now. Please try between 12:00 and 21:00 IST.</p>
+  {% endif %}
+  <form method="post">
+    <div class="frm">
+      <div class="fg">
+        <label>Bottling Plant *</label>
+        <select name="plant" id="plantSel" required {% if user.role=='plant' %}disabled{% endif %} onchange="loadSrc()">
+          {% if user.role=='plant' %}
+            <option value="{{ user.plant }}">{{ user.plant }}</option>
+          {% else %}
+            <option value="">Select Plant</option>
+            {% for p in PLANTS %}
+            <option value="{{ p[0] }}">{{ p[0] }} ({{ p[1] }})</option>
+            {% endfor %}
+          {% endif %}
+        </select>
+        {% if user.role=='plant' %}<input type="hidden" name="plant" value="{{ user.plant }}">{% endif %}
+      </div>
+      <div class="fg">
+        <label>Preferred Source *</label>
+        <select name="source" id="srcSel" required>
+          <option value="">Select plant first</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Date *</label>
+        <input type="date" name="date" value="{{ today }}" required>
+      </div>
+    </div>
+    <div class="frm">
+      <div class="fg">
+        <label>Required Qty (MT) *</label>
+        <input type="number" name="req" step="0.001" min="0" required placeholder="e.g. 450">
+      </div>
+      <div class="fg">
+        <label>Available Ullage (MT)</label>
+        <input type="number" name="ullage" step="0.001" min="0" placeholder="e.g. 600">
+      </div>
+      <div class="fg">
+        <label>Priority</label>
+        <select name="priority">
+          <option>Normal</option><option>High</option><option>Critical</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Remarks</label>
+        <input type="text" name="remarks" placeholder="Optional">
+      </div>
+    </div>
+    {% if user.role == 'plant' and not mod_ok %}
+    <button class="btn btn-p" type="button" disabled style="opacity:.5">Submit Demand (Locked)</button>
+    {% else %}
+    <button class="btn btn-p" type="submit">Submit Demand</button>
+    {% endif %}
+  </form>
+</div>
+<div class="sec">
+  <h2>Demand Records</h2>
+  <div class="date-bar">
+    <form method="get" style="display:flex;gap:.5rem;align-items:center">
+      <label>Filter by Date:</label>
+      <input type="date" name="date" value="{{ date_f }}">
+      <button class="btn btn-p btn-sm" type="submit">Apply</button>
+      <a class="btn btn-sm" style="background:#64748b" href="{{ url_for('demand') }}">All</a>
+    </form>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Date</th><th>Plant</th><th>OMC</th><th>Source</th>
+        <th>Required</th><th>Actual</th><th>Priority</th><th>Remarks</th>
+        {% if user.role=='master' %}<th>Action</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for d in rows %}
+      <tr>
+        <td>{{ d.id }}</td>
+        <td>{{ d.date }}</td>
+        <td>{{ d.plant }}</td>
+        <td>{{ d.omc }}</td>
+        <td>{{ d.source }}</td>
+        <td>{{ '%.3f'|format(d.req) }}</td>
+        <td>
+          {% if d.actual is not none %}
+            {{ '%.3f'|format(d.actual) }}
+          {% else %}
+            <form method="post" action="{{ url_for('set_actual', did=d.id) }}" style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center">
+              <input type="number" name="actual" step="0.001" min="0" placeholder="0.000" style="width:80px;padding:.2rem" required>
+              <input type="text" name="remarks" placeholder="Remark if Actual < Required" style="width:150px;padding:.2rem;font-size:.8rem">
+              <button class="btn btn-ok btn-sm" type="submit">Save</button>
+            </form>
+          {% endif %}
+        </td>
+        <td>{{ d.priority }}</td>
+        <td>{{ d.remarks or '—' }}</td>
+        {% if user.role=='master' %}
+        <td>
+          <form method="post" action="{{ url_for('delete_demand', did=d.id) }}" onsubmit="return confirm('Delete?')">
+            <button class="btn btn-e btn-sm" type="submit">Del</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="10" style="text-align:center">No records</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<script>
+const DIST = {{ DIST|tojson }};
+function loadSrc(){
+  const plant = document.getElementById("plantSel").value;
+  const sel = document.getElementById("srcSel");
+  sel.innerHTML = "";
+  const d = DIST[plant] || {};
+  const keys = Object.keys(d);
+  if(!keys.length){ sel.innerHTML = '<option value="">No connected sources</option>'; return; }
+  keys.forEach(k => {
+    const o = document.createElement("option");
+    o.value = k; o.textContent = k;
+    sel.appendChild(o);
+  });
+}
+{% if user.role=='plant' %}
+document.addEventListener("DOMContentLoaded", loadSrc);
+{% endif %}
+</script>
+{% endblock %}

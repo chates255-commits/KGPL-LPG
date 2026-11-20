@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Actual & Tariff · KGPL{% endblock %}
+{% block content %}
+<h1>Actual Receipt & Tariff</h1>
+<p class="sub">Variable ₹3.95/MT/Km + Fixed ₹0.01/MT + GST 18%</p>
+<div class="date-bar">
+  <form method="get" style="display:flex;gap:.5rem;align-items:center">
+    <label>Filter by Date:</label>
+    <input type="date" name="date" value="{{ date_f }}">
+    <button class="btn btn-p btn-sm" type="submit">Apply</button>
+    <a class="btn btn-sm" style="background:#64748b" href="{{ url_for('tariff') }}">All</a>
+  </form>
+</div>
+<div class="cards">
+  <div class="card"><div class="l">Total Tariff</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_t) }}</div></div>
+  <div class="card"><div class="l">Total GST 18%</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_g) }}</div></div>
+  <div class="card"><div class="l">Grand Total</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_t+tot_g) }}</div></div>
+</div>
+<div class="sec">
+  <h2>OMC-wise Breakup</h2>
+  <table>
+    <thead><tr><th>OMC</th><th>Entries</th><th>Required</th><th>Actual</th><th>Tariff</th><th>GST 18%</th><th>Grand Total</th><th>% of Total</th></tr></thead>
+    <tbody>
+    {% set grand_all = tot_t + tot_g %}
+    {% for o in OMCS %}
+      {% set r = omc_map[o] %}
+      {% set g = r.tariff + r.gst %}
+      <tr>
+        <td><strong>{{ o }}</strong></td>
+        <td>{{ r.c }}</td>
+        <td>{{ '%.2f'|format(r.req) }}</td>
+        <td>{{ '%.2f'|format(r.act) }}</td>
+        <td>₹{{ '%.2f'|format(r.tariff) }}</td>
+        <td>₹{{ '%.2f'|format(r.gst) }}</td>
+        <td><strong>₹{{ '%.2f'|format(g) }}</strong></td>
+        <td>{{ '%.1f'|format((g/grand_all*100) if grand_all else 0) }}%</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="sec">
+  <h2>Tariff Details</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Plant</th><th>OMC</th><th>Source</th><th>Dist (Km)</th>
+        <th>Required</th><th>Actual</th><th>Variable</th><th>Fixed</th><th>Tariff</th><th>GST</th><th>Grand Total</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for d in details %}
+      <tr>
+        <td>{{ d.date }}</td>
+        <td>{{ d.plant }}</td>
+        <td>{{ d.omc }}</td>
+        <td>{{ d.source }}</td>
+        <td>{{ '%.3f'|format(d.km) }}</td>
+        <td>{{ '%.3f'|format(d.req) }}</td>
+        <td><strong>{{ '%.3f'|format(d.actual) }}</strong></td>
+        <td>₹{{ '%.2f'|format(d.var) }}</td>
+        <td>₹{{ '%.2f'|format(d.fix) }}</td>
+        <td>₹{{ '%.2f'|format(d.tariff) }}</td>
+        <td>₹{{ '%.2f'|format(d.gst) }}</td>
+        <td><strong>₹{{ '%.2f'|format(d.grand) }}</strong></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="12" style="text-align:center">No actual quantities yet</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

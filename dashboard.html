@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · KGPL{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p class="sub">OMC-wise & Source-wise summary · Shared live data</p>
+
+<div class="sec" style="background:{{ '#dcfce7' if mod_ok else '#fef3c7' }};border-color:{{ '#86efac' if mod_ok else '#fcd34d' }}">
+  <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between">
+    <div>
+      <div style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase">Effective Operational Window (22:00 → next day 22:00 IST)</div>
+      <div style="font-weight:700;color:#1F4E79;margin-top:.15rem">{{ effective_window }}</div>
+      <div style="font-size:.82rem;color:#64748b;margin-top:.2rem">Effective Date: <strong>{{ effective_date }}</strong> · Now: {{ now_ist_str }}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase">Plant / Source Edit Window</div>
+      <div style="font-weight:700;color:{{ '#166534' if mod_ok else '#92400e' }};margin-top:.15rem">{{ 'OPEN (12:00–21:00 IST)' if mod_ok else 'LOCKED' }}</div>
+      <div style="font-size:.8rem;color:#64748b">{{ mod_msg }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="date-bar">
+  <form method="get" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+    <label>Filter by Date:</label>
+    <input type="date" name="date" value="{{ date_f }}">
+    <button class="btn btn-p btn-sm" type="submit">Apply</button>
+    <a class="btn btn-sm" style="background:#64748b" href="{{ url_for('dashboard') }}">All Dates</a>
+  </form>
+</div>
+
+<div class="sec">
+  <h2>Generate Report</h2>
+  <form method="post" action="{{ url_for('report') }}" style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end">
+    <div class="fg">
+      <label>From Date *</label>
+      <input type="date" name="from_date" required value="{{ date_f or effective_date }}">
+    </div>
+    <div class="fg">
+      <label>To Date *</label>
+      <input type="date" name="to_date" required value="{{ date_f or effective_date }}">
+    </div>
+    <div class="fg">
+      <label>Format *</label>
+      <select name="format" required>
+        <option value="excel">Excel (.xlsx)</option>
+        <option value="pdf">PDF (.pdf)</option>
+      </select>
+    </div>
+    <button class="btn btn-p" type="submit">Download Report</button>
+  </form>
+  <p style="font-size:.78rem;color:#64748b;margin-top:.5rem">Report includes demand, actual, distance, tariff, GST and OMC summary for the selected period.</p>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="l">Total Required</div><div class="v">{{ '%.2f'|format(tot_req) }} <small>MT</small></div></div>
+  <div class="card"><div class="l">Total Actual</div><div class="v">{{ '%.2f'|format(tot_act) }} <small>MT</small></div></div>
+  <div class="card"><div class="l">Plants Reporting</div><div class="v">{{ plants }}</div></div>
+  <div class="card"><div class="l">Grand Total</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_tariff+tot_gst) }}</div></div>
+</div>
+<div class="sec">
+  <h2>OMC-wise Summary (IOCL / BPCL / HPCL)</h2>
+  <table>
+    <thead><tr><th>OMC</th><th>Required (MT)</th><th>Actual (MT)</th><th>Entries</th><th>% Share</th></tr></thead>
+    <tbody>
+    {% for o in OMCS %}
+      <tr>
+        <td><strong>{{ o }}</strong></td>
+        <td>{{ '%.2f'|format(omc[o].req) }}</td>
+        <td>{{ '%.2f'|format(omc[o].act) }}</td>
+        <td>{{ omc[o].c }}</td>
+        <td>{{ '%.1f'|format((omc[o].req/tot_req*100) if tot_req else 0) }}%</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="sec">
+  <h2>Source-wise Pumping Requirement</h2>
+  <table>
+    <thead><tr><th>Source</th><th>Required (MT)</th><th>Actual (MT)</th><th>Entries</th><th>% Share</th></tr></thead>
+    <tbody>
+    {% for s in SOURCES if src[s].req or src[s].act %}
+      <tr>
+        <td><strong>{{ s }}</strong></td>
+        <td>{{ '%.2f'|format(src[s].req) }}</td>
+        <td>{{ '%.2f'|format(src[s].act) }}</td>
+        <td>{{ src[s].c }}</td>
+        <td>{{ '%.1f'|format((src[s].req/tot_req*100) if tot_req else 0) }}%</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" style="text-align:center">No data</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="sec">
+  <h2>Billing Summary</h2>
+  <div class="cards">
+    <div class="card"><div class="l">Total Tariff</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_tariff) }}</div></div>
+    <div class="card"><div class="l">GST 18%</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_gst) }}</div></div>
+    <div class="card"><div class="l">Grand Total</div><div class="v" style="font-size:1.05rem">₹{{ '%.2f'|format(tot_tariff+tot_gst) }}</div></div>
+  </div>
+  <p style="font-size:.8rem;color:#64748b;margin-top:.4rem">Tariff = (Actual MT × Distance Km × ₹3.95) + (Actual MT × ₹0.01) | GST = 18%</p>
+</div>
+<div class="sec">
+  <h2>Date-wise Billing Summary</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Entries</th><th>Required (MT)</th><th>Actual (MT)</th><th>Tariff (₹)</th><th>GST 18% (₹)</th><th>Grand Total (₹)</th></tr></thead>
+    <tbody>
+    {% for dt in date_list %}
+      {% set r = by_date[dt] %}
+      <tr>
+        <td><strong>{{ dt }}</strong></td>
+        <td>{{ r.c }}</td>
+        <td>{{ '%.2f'|format(r.req) }}</td>
+        <td>{{ '%.2f'|format(r.act) }}</td>
+        <td>₹{{ '%.2f'|format(r.tariff) }}</td>
+        <td>₹{{ '%.2f'|format(r.gst) }}</td>
+        <td><strong>₹{{ '%.2f'|format(r.tariff+r.gst) }}</strong></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" style="text-align:center">No billing data</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

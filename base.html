@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}KGPL LPG System{% endblock %}</title>
+<style>
+:root{--p:#1F4E79;--pd:#163a5c;--bg:#f0f4f8;--c:#fff;--t:#1a2533;--m:#64748b;--ok:#16a34a;--er:#dc2626;--bd:#e2e8f0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--t);min-height:100vh}
+.nav{background:var(--p);color:#fff;padding:.7rem 1.15rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
+.nav .brand{font-weight:700;font-size:1.05rem}
+.nav .brand small{display:block;font-weight:400;opacity:.8;font-size:.72rem}
+.tabs{display:flex;gap:.2rem;flex-wrap:wrap}
+.tabs a{color:#fff;text-decoration:none;padding:.35rem .7rem;border-radius:6px;font-size:.84rem;font-weight:500}
+.tabs a:hover,.tabs a.on{background:rgba(255,255,255,.2)}
+.nav-right{display:flex;align-items:center;gap:.55rem;font-size:.8rem}
+.nav-right a{color:#fff;text-decoration:none;background:rgba(255,255,255,.15);padding:.28rem .55rem;border-radius:6px}
+.wrap{max-width:1200px;margin:0 auto;padding:1.1rem}
+h1{font-size:1.25rem;color:var(--p);margin-bottom:.15rem}
+.sub{color:var(--m);font-size:.86rem;margin-bottom:.9rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem;margin-bottom:1rem}
+.card{background:var(--c);border-radius:10px;padding:.9rem 1rem;border:1px solid var(--bd)}
+.card .l{font-size:.68rem;color:var(--m);text-transform:uppercase;font-weight:600}
+.card .v{font-size:1.25rem;font-weight:700;color:var(--p);margin-top:.1rem}
+.sec{background:var(--c);border-radius:10px;padding:1rem;margin-bottom:1rem;border:1px solid var(--bd)}
+.sec h2{font-size:.95rem;color:var(--p);margin-bottom:.6rem;padding-bottom:.3rem;border-bottom:2px solid #e8eef5}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{padding:.45rem .55rem;text-align:left;border-bottom:1px solid var(--bd)}
+th{background:var(--p);color:#fff;font-size:.74rem;text-transform:uppercase}
+tr:nth-child(even){background:#f8fafc}
+.btn{display:inline-block;padding:.38rem .8rem;border-radius:6px;border:none;font-size:.84rem;font-weight:600;cursor:pointer;color:#fff;text-decoration:none}
+.btn-p{background:var(--p)}.btn-ok{background:var(--ok)}.btn-e{background:var(--er)}.btn-sm{padding:.2rem .45rem;font-size:.76rem}
+.frm{display:flex;flex-wrap:wrap;gap:.7rem;margin-bottom:.7rem}
+.fg{display:flex;flex-direction:column;gap:.2rem;flex:1;min-width:120px}
+.fg label{font-size:.72rem;font-weight:600;color:var(--m)}
+.fg input,.fg select{padding:.4rem .55rem;border:1px solid var(--bd);border-radius:6px;font-size:.86rem}
+.alert{padding:.55rem .8rem;border-radius:8px;margin-bottom:.8rem;font-size:.86rem}
+.a-ok{background:#dcfce7;color:#166534}.a-e{background:#fee2e2;color:#991b1b}
+.g{background:#dcfce7!important}.r{background:#fee2e2!important}
+.date-bar{display:flex;align-items:center;gap:.6rem;margin-bottom:.85rem;flex-wrap:wrap;font-size:.84rem}
+.foot{text-align:center;padding:1rem;color:var(--m);font-size:.74rem}
+@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+{% if user %}
+<nav class="nav">
+  <div class="brand">KGPL LPG System<small>Kandla–Gorakhpur Pipeline · IHB</small></div>
+  <div class="tabs">
+    {% if user.role != 'source' %}
+    <a href="{{ url_for('dashboard') }}" class="{{ 'on' if request.endpoint=='dashboard' else '' }}">Dashboard</a>
+    {% endif %}
+    {% if user.role in ('master','source') %}
+    <a href="{{ url_for('availability') }}" class="{{ 'on' if request.endpoint=='availability' else '' }}">Product Availability</a>
+    {% endif %}
+    {% if user.role in ('master','plant') %}
+    <a href="{{ url_for('demand') }}" class="{{ 'on' if request.endpoint=='demand' else '' }}">Daily Demand</a>
+    {% endif %}
+    {% if user.role != 'source' %}
+    <a href="{{ url_for('tariff') }}" class="{{ 'on' if request.endpoint=='tariff' else '' }}">Actual & Tariff</a>
+    <a href="{{ url_for('distance') }}" class="{{ 'on' if request.endpoint=='distance' else '' }}">Distance Matrix</a>
+    {% endif %}
+    {% if user.role == 'master' %}
+    <a href="{{ url_for('masters') }}" class="{{ 'on' if request.endpoint=='masters' else '' }}">Masters</a>
+    {% endif %}
+  </div>
+  <div class="nav-right">
+    <span>{{ user.name }} ({{ user.role }})</span>
+    <a href="{{ url_for('change_password') }}">Change Password</a>
+    <a href="{{ url_for('logout') }}">Logout</a>
+  </div>
+</nav>
+{% endif %}
+<div class="wrap">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert {{ 'a-ok' if cat=='ok' else 'a-e' }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</div>
+<footer class="foot">IHB — Joint Venture of IndianOil, HPCL & BPCL · All quantities in MT</footer>
+</body>
+</html>

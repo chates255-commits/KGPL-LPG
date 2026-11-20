@@ -1,0 +1,24 @@
+IMPORTANT - GitHub / Render folder structure
+============================================
+
+When you upload to GitHub, the repository ROOT must look like this:
+
+  app.py
+  requirements.txt
+  Procfile
+  templates/
+      login.html
+      dashboard.html
+      ...
+  static/          (can be empty)
+
+WRONG (causes TemplateNotFound):
+  kgpl_cloud/
+      app.py
+      templates/
+
+If your repo has a kgpl_cloud folder, either:
+  A) Upload the FILES INSIDE kgpl_cloud to the repo root, OR
+  B) In Render Settings set Root Directory = kgpl_cloud
+
+After changing structure, do a Manual Deploy on Render.
