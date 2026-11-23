@@ -1,0 +1,97 @@
+========================================================
+  KGPL — Neon Postgres setup (data erase problem fix)
+========================================================
+
+IMPORTANT
+---------
+- GitHub ONLY stores CODE (app.py, templates). It does NOT store demand/availability data.
+- Render free disk WIPES SQLite on sleep/redeploy → data looks "erased".
+- Fix = put data in Neon Postgres + set DATABASE_URL on Render.
+
+--------------------------------------------------------
+STEP 1 — Create free Neon database
+--------------------------------------------------------
+1. Open https://neon.tech
+2. Sign up / Login (GitHub or Google is fine)
+3. Click "Create a project"
+   - Project name : kgpl
+   - Database    : neondb (default)
+   - Region      : Singapore (or closest to you)
+4. After project opens, find "Connection string" / "Connection details"
+5. Copy the URI. It looks like:
+
+   postgresql://USERNAME:PASSWORD@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require
+
+6. Keep this string private (password is inside).
+
+
+--------------------------------------------------------
+STEP 2 — Put DATABASE_URL on Render (NOT on GitHub)
+--------------------------------------------------------
+1. Open https://dashboard.render.com
+2. Click your Web Service (kgpl-dashboard)
+3. Left menu → Environment
+4. Add Environment Variable:
+
+   KEY   =  DATABASE_URL
+   VALUE =  (paste full Neon connection string from Step 1)
+
+5. Save Changes
+6. Render will redeploy automatically
+
+After this, app uses Neon. Data survives sleep and redeploy.
+
+
+--------------------------------------------------------
+STEP 3 — Confirm it works
+--------------------------------------------------------
+1. Open your app URL
+2. Login: master / Master@IHB2026
+   (first start creates tables + default users on Neon)
+3. Enter one test demand or availability
+4. From Render → Manual Deploy (or wait for sleep/wake)
+5. Login again → test data should STILL be there
+
+If data is still missing:
+- Environment → check DATABASE_URL is present (no typo)
+- Logs → look for "DB ready: Postgres/Neon"
+- Neon console → Tables: users, demands, availability
+
+
+--------------------------------------------------------
+STEP 4 — GitHub (code only)
+--------------------------------------------------------
+Upload/commit only code files, for example:
+
+  app.py
+  embedded_templates.py
+  logo_b64.py
+  requirements.txt
+  Procfile
+  static/ihb_logo.png
+  templates/
+
+Do NOT put Neon password in GitHub.
+Do NOT commit a .env file with real password.
+
+
+--------------------------------------------------------
+Optional — local .env (only on your PC, never commit)
+--------------------------------------------------------
+Create a file named .env next to app.py on your PC:
+
+  DATABASE_URL=postgresql://USER:PASS@HOST/neondb?sslmode=require
+
+Render does not read .env from GitHub; use Environment Variables there.
+
+
+--------------------------------------------------------
+Quick checklist
+--------------------------------------------------------
+[ ] Neon project created
+[ ] Connection string copied
+[ ] Render → Environment → DATABASE_URL set
+[ ] Redeploy finished
+[ ] Login works
+[ ] Test entry remains after refresh / redeploy
+

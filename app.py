@@ -190,39 +190,189 @@ def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
 
+# DATABASE_URL = Neon/Postgres connection string. If unset, uses local SQLite.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_PG = DATABASE_URL.startswith("postgres")
+
+
+class _DB:
+    """Thin wrapper: same API for SQLite and Postgres (Neon)."""
+
+    def __init__(self):
+        self.pg = USE_PG
+        if self.pg:
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+            url = DATABASE_URL
+            # Render/Neon sometimes use postgres:// 
+            if url.startswith("postgres://"):
+                url = "postgresql://" + url[len("postgres://"):]
+            self.conn = psycopg2.connect(url, sslmode="require")
+            self.cur = self.conn.cursor(cursor_factory=RealDictCursor)
+        else:
+            self.conn = sqlite3.connect(DB, timeout=30)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys=ON")
+            self.cur = self.conn.cursor()
+
+    def _sql(self, sql):
+        if self.pg:
+            return sql.replace("?", "%s")
+        return sql
+
+    def execute(self, sql, params=None):
+        sql = self._sql(sql)
+        if params is None:
+            self.cur.execute(sql)
+        else:
+            self.cur.execute(sql, tuple(params))
+        return self
+
+    def fetchone(self):
+        row = self.cur.fetchone()
+        return row
+
+    def fetchall(self):
+        return self.cur.fetchall()
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        try:
+            self.cur.close()
+        except Exception:
+            pass
+        self.conn.close()
+
+    def scalar(self, sql, params=None):
+        row = self.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        if self.pg:
+            return list(row.values())[0]
+        return row[0]
+
+
 def get_db():
-    conn = sqlite3.connect(DB, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    return _DB()
 
 
 def init_db():
-    db_dir = os.path.dirname(DB)
-    if db_dir and not os.path.isdir(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
+    if not USE_PG:
+        db_dir = os.path.dirname(DB)
+        if db_dir and not os.path.isdir(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+
     conn = get_db()
-    c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY, password TEXT NOT NULL, role TEXT NOT NULL,
-        name TEXT, plant TEXT, source TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS demands (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL, plant TEXT NOT NULL, omc TEXT NOT NULL,
-        source TEXT NOT NULL, req REAL NOT NULL, ullage REAL DEFAULT 0,
-        priority TEXT DEFAULT 'Normal', actual REAL, remarks TEXT DEFAULT '',
-        created_by TEXT, created_at TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS availability (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        source TEXT NOT NULL, omc TEXT NOT NULL, qty REAL NOT NULL,
-        date TEXT NOT NULL, UNIQUE(source, omc, date))""")
-    # seed users if empty
-    if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+    if USE_PG:
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY, password TEXT NOT NULL, role TEXT NOT NULL,
+            name TEXT, plant TEXT, source TEXT)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS demands (
+            id SERIAL PRIMARY KEY,
+            date TEXT NOT NULL, plant TEXT NOT NULL, omc TEXT NOT NULL,
+            source TEXT NOT NULL, req DOUBLE PRECISION NOT NULL, ullage DOUBLE PRECISION DEFAULT 0,
+            priority TEXT DEFAULT 'Normal', actual DOUBLE PRECISION, remarks TEXT DEFAULT '',
+            created_by TEXT, created_at TEXT)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS availability (
+            id SERIAL PRIMARY KEY,
+            source TEXT NOT NULL, omc TEXT NOT NULL, qty DOUBLE PRECISION NOT NULL,
+            date TEXT NOT NULL, UNIQUE(source, omc, date))""")
+    else:
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY, password TEXT NOT NULL, role TEXT NOT NULL,
+            name TEXT, plant TEXT, source TEXT)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS demands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL, plant TEXT NOT NULL, omc TEXT NOT NULL,
+            source TEXT NOT NULL, req REAL NOT NULL, ullage REAL DEFAULT 0,
+            priority TEXT DEFAULT 'Normal', actual REAL, remarks TEXT DEFAULT '',
+            created_by TEXT, created_at TEXT)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS availability (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL, omc TEXT NOT NULL, qty REAL NOT NULL,
+            date TEXT NOT NULL, UNIQUE(source, omc, date))""")
+
+    n = conn.scalar("SELECT COUNT(*) FROM users")
+    if not n:
         for u in DEFAULT_USERS:
-            c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",
-                      (u[0], hash_pw(u[1]), u[2], u[3], u[4], u[5]))
+            conn.execute(
+                "INSERT INTO users (id, password, role, name, plant, source) VALUES (?,?,?,?,?,?)",
+                (u[0], hash_pw(u[1]), u[2], u[3], u[4], u[5]),
+            )
     conn.commit()
     conn.close()
+    
+    # Pumping plan tables
+    if USE_PG:
+        conn.execute("""CREATE TABLE IF NOT EXISTS pumping_plans (
+            id SERIAL PRIMARY KEY,
+            plan_date TEXT NOT NULL UNIQUE,
+            status TEXT DEFAULT 'draft',
+            published_at TEXT,
+            created_by TEXT,
+            notes TEXT DEFAULT ''
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS pumping_items (
+            id SERIAL PRIMARY KEY,
+            plan_id INTEGER NOT NULL,
+            seq INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            plant TEXT NOT NULL,
+            allocation DOUBLE PRECISION NOT NULL,
+            flow_rate DOUBLE PRECISION,
+            manual_start TEXT,
+            start_time TEXT,
+            duration_hrs DOUBLE PRECISION,
+            completion_time TEXT,
+            notes TEXT DEFAULT '',
+            demand_id INTEGER
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT,
+            role TEXT,
+            title TEXT,
+            body TEXT,
+            created_at TEXT,
+            read INTEGER DEFAULT 0
+        )""")
+    else:
+        conn.execute("""CREATE TABLE IF NOT EXISTS pumping_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_date TEXT NOT NULL UNIQUE,
+            status TEXT DEFAULT 'draft',
+            published_at TEXT,
+            created_by TEXT,
+            notes TEXT DEFAULT ''
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS pumping_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id INTEGER NOT NULL,
+            seq INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            plant TEXT NOT NULL,
+            allocation REAL NOT NULL,
+            flow_rate REAL,
+            manual_start TEXT,
+            start_time TEXT,
+            duration_hrs REAL,
+            completion_time TEXT,
+            notes TEXT DEFAULT '',
+            demand_id INTEGER
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            role TEXT,
+            title TEXT,
+            body TEXT,
+            created_at TEXT,
+            read INTEGER DEFAULT 0
+        )""")
+
+    print("DB ready:", "Postgres/Neon" if USE_PG else "SQLite", flush=True)
 
 
 def login_required(f):
@@ -253,6 +403,118 @@ def tariff_calc(actual, plant, source):
     tariff = variable + fixed
     gst = tariff * 0.18
     return km, variable, fixed, tariff, gst, tariff + gst
+
+
+
+def parse_dt(s):
+    """Parse 'DD-Mon-YYYY HH:MM' or ISO-like to datetime IST-aware naive."""
+    if not s:
+        return None
+    s = str(s).strip()
+    for fmt in ("%d-%b-%Y %H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d-%m-%Y %H:%M"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+def fmt_dt(dt):
+    if not dt:
+        return ""
+    return dt.strftime("%d-%b-%Y %H:%M")
+
+def add_hours(dt, hours):
+    if not dt:
+        return None
+    return dt + timedelta(hours=float(hours or 0))
+
+def calc_plan_times(items):
+    """items: list of dicts with source, allocation, flow_rate, manual_start.
+    Returns same list with start_time, duration_hrs, completion_time filled.
+    Per-source sequential: next starts when previous on same source completes,
+    unless manual_start overrides.
+    """
+    last_end = {}  # source -> datetime
+    for it in items:
+        alloc = float(it.get("allocation") or 0)
+        rate = float(it.get("flow_rate") or 0)
+        dur = (alloc / rate) if rate > 0 else 0
+        it["duration_hrs"] = round(dur, 2)
+        man = parse_dt(it.get("manual_start"))
+        src = it.get("source") or ""
+        if man:
+            start = man
+        elif src in last_end:
+            start = last_end[src]
+        else:
+            # default window start 22:00 on plan effective logic - use manual empty
+            start = None
+        end = add_hours(start, dur) if start else None
+        it["start_time"] = fmt_dt(start) if start else ""
+        it["completion_time"] = fmt_dt(end) if end else ""
+        if end:
+            last_end[src] = end
+    return items
+
+def create_notifications(conn, title, body, roles=None, user_ids=None):
+    now = now_ist().isoformat()
+    roles = roles or []
+    user_ids = user_ids or []
+    if roles:
+        # notify all users with those roles
+        for role in roles:
+            rows = conn.execute("SELECT id FROM users WHERE role=?", (role,)).fetchall()
+            for r in rows:
+                conn.execute(
+                    "INSERT INTO notifications (user_id, role, title, body, created_at, read) VALUES (?,?,?,?,?,0)",
+                    (r["id"], role, title, body, now),
+                )
+    for uid in user_ids:
+        conn.execute(
+            "INSERT INTO notifications (user_id, role, title, body, created_at, read) VALUES (?,?,?,?,?,0)",
+            (uid, None, title, body, now),
+        )
+    conn.commit()
+
+def unread_notifications(user):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM notifications WHERE user_id=? AND read=0 ORDER BY id DESC LIMIT 20",
+        (user["id"],),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def master_plan_reminder():
+    """True if IST time is 21:30–21:59 and no published plan for effective date."""
+    dt = now_ist()
+    if dt.hour != 21 or dt.minute < 30:
+        return False, None
+    ed = effective_date()
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, status FROM pumping_plans WHERE plan_date=?", (ed,)
+    ).fetchone()
+    conn.close()
+    if row and row["status"] == "published":
+        return False, ed
+    return True, ed
+
+
+
+@app.context_processor
+def inject_notes():
+    try:
+        u = current_user()
+        if not u:
+            return {"nav_notes": [], "plan_reminder": False, "plan_reminder_date": None}
+        notes = unread_notifications(u)
+        rem, rd = (False, None)
+        if u.get("role") == "master":
+            rem, rd = master_plan_reminder()
+        return {"nav_notes": notes, "plan_reminder": rem, "plan_reminder_date": rd}
+    except Exception:
+        return {"nav_notes": [], "plan_reminder": False, "plan_reminder_date": None}
 
 
 @app.route("/")
@@ -337,6 +599,8 @@ def dashboard():
     by_date = {}
     plants = set()
 
+    bill_omc = {o: {"tariff": 0.0, "gst": 0.0, "grand": 0.0} for o in OMCS}
+
     for d in rows:
         tot_req += d["req"]
         act = d["actual"] or 0
@@ -354,6 +618,10 @@ def dashboard():
             _, _, _, t, g, _ = tariff_calc(act, d["plant"], d["source"])
             tot_tariff += t
             tot_gst += g
+            if d["omc"] in bill_omc:
+                bill_omc[d["omc"]]["tariff"] += t
+                bill_omc[d["omc"]]["gst"] += g
+                bill_omc[d["omc"]]["grand"] += t + g
         dt = d["date"]
         if dt not in by_date:
             by_date[dt] = {"req": 0, "act": 0, "c": 0, "tariff": 0, "gst": 0}
@@ -371,6 +639,7 @@ def dashboard():
         "dashboard.html", user=user, date_f=date_f,
         tot_req=tot_req, tot_act=tot_act, plants=len(plants),
         omc=omc, src=src, tot_tariff=tot_tariff, tot_gst=tot_gst,
+        bill_omc=bill_omc,
         by_date=by_date, date_list=date_list, OMCS=OMCS, SOURCES=SOURCES,
         effective_date=effective_date(),
         effective_window=effective_window_label(),
@@ -531,10 +800,7 @@ def demand():
             if not av:
                 flash(f"No product availability set for {source} / {omc}. Set it first.", "error")
             else:
-                booked = conn.execute(
-                    "SELECT COALESCE(SUM(req),0) FROM demands WHERE source=? AND omc=? AND date=?",
-                    (source, omc, date),
-                ).fetchone()[0]
+                booked = conn.scalar("SELECT COALESCE(SUM(req),0) FROM demands WHERE source=? AND omc=? AND date=?", (source, omc, date)) or 0
                 if booked + req > av["qty"] + 0.0001:
                     bal = av["qty"] - booked
                     flash(
@@ -789,22 +1055,41 @@ def report():
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle("T", parent=styles["Heading1"], fontSize=14, textColor=colors.HexColor("#1F4E79"))
         story = []
+        # IHB logo at top of PDF
+        try:
+            from reportlab.platypus import Image as RLImage
+            logo_path = os.path.join(_BASE_DIR, "static", "ihb_logo.png")
+            if not os.path.isfile(logo_path):
+                # fallback: write from embedded base64
+                try:
+                    import base64
+                    from logo_b64 import LOGO_B64
+                    logo_path = os.path.join("/tmp", "ihb_logo.png")
+                    with open(logo_path, "wb") as lf:
+                        lf.write(base64.b64decode(LOGO_B64))
+                except Exception:
+                    logo_path = None
+            if logo_path and os.path.isfile(logo_path):
+                img = RLImage(logo_path, width=40*mm, height=18*mm)
+                story.append(img)
+                story.append(Spacer(1, 4))
+        except Exception as _logo_err:
+            print("logo skip:", _logo_err)
         story.append(Paragraph("KGPL LPG Report — IHB", title_style))
         story.append(Paragraph(f"Period: {from_date} to {to_date} &nbsp;|&nbsp; Generated: {now_ist().strftime('%d-%b-%Y %H:%M IST')}", styles["Normal"]))
         story.append(Spacer(1, 8))
-        header = ["Date", "Plant", "OMC", "Source", "Req (MT)", "Actual (MT)", "Dist", "Tariff", "GST", "Total"]
+        header = ["Date", "Plant", "OMC", "Source", "Req (MT)", "Actual (MT)", "Tariff", "GST", "Total"]
         table_data = [header]
         for r in data:
             table_data.append([
                 r["date"], r["plant"][:18], r["omc"], r["source"][:14],
                 f"{r['req']:.2f}",
                 f"{r['actual']:.2f}" if r["actual"] is not None else "—",
-                f"{r['km']:.1f}" if r["km"] is not None else "—",
                 f"{r['tariff']:.2f}" if r["tariff"] is not None else "—",
                 f"{r['gst']:.2f}" if r["gst"] is not None else "—",
                 f"{r['grand']:.2f}" if r["grand"] is not None else "—",
             ])
-        table_data.append(["TOTAL", "", "", "", f"{tot_req:.2f}", f"{tot_act:.2f}", "", f"{tot_tariff:.2f}", f"{tot_gst:.2f}", f"{tot_tariff+tot_gst:.2f}"])
+        table_data.append(["TOTAL", "", "", "", f"{tot_req:.2f}", f"{tot_act:.2f}", f"{tot_tariff:.2f}", f"{tot_gst:.2f}", f"{tot_tariff+tot_gst:.2f}"])
         t = Table(table_data, repeatRows=1)
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E79")),
@@ -818,7 +1103,6 @@ def report():
         ]))
         story.append(t)
         story.append(Spacer(1, 10))
-        story.append(Paragraph(f"Effective window rule: 22:00 to next day 22:00 IST. Plant/Source edit window: 12:00–21:00 IST.", styles["Normal"]))
         doc.build(story)
         buf.seek(0)
         return send_file(buf, as_attachment=True, download_name=fname_base + ".pdf", mimetype="application/pdf")
@@ -828,7 +1112,7 @@ def report():
     ws = wb.active
     ws.title = "Demand Report"
     headers = ["Date", "Plant", "OMC", "Source", "Required (MT)", "Actual (MT)", "Priority", "Remarks",
-               "Distance (Km)", "Variable (₹)", "Fixed (₹)", "Tariff (₹)", "GST 18% (₹)", "Grand Total (₹)"]
+               "Tariff (₹)", "GST 18% (₹)", "Grand Total (₹)"]
     header_fill = PatternFill("solid", fgColor="1F4E79")
     header_font = Font(color="FFFFFF", bold=True, size=10)
     thin = Border(
@@ -837,13 +1121,33 @@ def report():
         top=Side(style="thin", color="CCCCCC"),
         bottom=Side(style="thin", color="CCCCCC"),
     )
+    # IHB logo in Excel
+    try:
+        from openpyxl.drawing.image import Image as XLImage
+        logo_path = os.path.join(_BASE_DIR, "static", "ihb_logo.png")
+        if not os.path.isfile(logo_path):
+            import base64
+            from logo_b64 import LOGO_B64
+            logo_path = os.path.join("/tmp", "ihb_logo.png")
+            with open(logo_path, "wb") as lf:
+                lf.write(base64.b64decode(LOGO_B64))
+        if os.path.isfile(logo_path):
+            xl_img = XLImage(logo_path)
+            xl_img.width = 120
+            xl_img.height = 54
+            ws.add_image(xl_img, "A1")
+            ws.row_dimensions[1].height = 45
+            ws.append([])  # row for logo space
+    except Exception as _e:
+        print("excel logo skip:", _e)
     ws.append(["KGPL LPG Report — IHB"])
     ws.append([f"Period: {from_date} to {to_date}"])
     ws.append([f"Generated: {now_ist().strftime('%d-%b-%Y %H:%M IST')}"])
     ws.append([])
+    header_row = ws.max_row + 1
     ws.append(headers)
     for col in range(1, len(headers) + 1):
-        cell = ws.cell(5, col)
+        cell = ws.cell(header_row, col)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
@@ -884,6 +1188,264 @@ def report():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+
+
+
+
+@app.route("/pumping", methods=["GET", "POST"])
+@login_required
+def pumping():
+    """Master: build / edit pumping plan from daily demands."""
+    user = current_user()
+    if user["role"] != "master":
+        flash("Only Master can edit pumping plan", "error")
+        return redirect(url_for("schedule_view"))
+    plan_date = request.values.get("date") or effective_date()
+    conn = get_db()
+
+    if request.method == "POST":
+        action = request.form.get("action") or "save"
+        # Load seq rows from form
+        seqs = request.form.getlist("seq")
+        items = []
+        for i, seq in enumerate(seqs):
+            items.append({
+                "seq": int(seq or i + 1),
+                "source": request.form.getlist("source")[i],
+                "plant": request.form.getlist("plant")[i],
+                "allocation": float(request.form.getlist("allocation")[i] or 0),
+                "flow_rate": float(request.form.getlist("flow_rate")[i] or 0),
+                "manual_start": request.form.getlist("manual_start")[i] or "",
+                "notes": request.form.getlist("notes")[i] if i < len(request.form.getlist("notes")) else "",
+                "demand_id": request.form.getlist("demand_id")[i] if i < len(request.form.getlist("demand_id")) else None,
+            })
+        items = calc_plan_times(items)
+        # upsert plan
+        plan = conn.execute("SELECT id FROM pumping_plans WHERE plan_date=?", (plan_date,)).fetchone()
+        if plan:
+            plan_id = plan["id"]
+            conn.execute("DELETE FROM pumping_items WHERE plan_id=?", (plan_id,))
+        else:
+            conn.execute(
+                "INSERT INTO pumping_plans (plan_date, status, created_by) VALUES (?,?,?)",
+                (plan_date, "draft", user["id"]),
+            )
+            conn.commit()
+            plan = conn.execute("SELECT id FROM pumping_plans WHERE plan_date=?", (plan_date,)).fetchone()
+            plan_id = plan["id"]
+        for it in items:
+            did = it.get("demand_id")
+            try:
+                did = int(did) if did not in (None, "", "None") else None
+            except Exception:
+                did = None
+            conn.execute(
+                """INSERT INTO pumping_items
+                   (plan_id, seq, source, plant, allocation, flow_rate, manual_start,
+                    start_time, duration_hrs, completion_time, notes, demand_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (plan_id, it["seq"], it["source"], it["plant"], it["allocation"],
+                 it["flow_rate"], it["manual_start"], it["start_time"], it["duration_hrs"],
+                 it["completion_time"], it.get("notes") or "", did),
+            )
+        status = "published" if action == "publish" else "draft"
+        pub_at = now_ist().isoformat() if action == "publish" else None
+        conn.execute(
+            "UPDATE pumping_plans SET status=?, published_at=COALESCE(?, published_at) WHERE id=?",
+            (status, pub_at, plan_id),
+        )
+        conn.commit()
+        if action == "publish":
+            create_notifications(
+                conn,
+                title="Pumping plan published",
+                body=f"Pumping plan for {plan_date} is ready. Kindly check Schedule page.",
+                roles=["plant", "source"],
+            )
+            flash("Plan published. Plants and Sources have been notified.", "ok")
+        else:
+            flash("Plan saved as draft (times recalculated).", "ok")
+        conn.close()
+        if action == "pdf":
+            return redirect(url_for("pumping_pdf", date=plan_date))
+        return redirect(url_for("pumping", date=plan_date))
+
+    # GET: load or seed from demands
+    plan = conn.execute("SELECT * FROM pumping_plans WHERE plan_date=?", (plan_date,)).fetchone()
+    items = []
+    if plan:
+        items = [dict(r) for r in conn.execute(
+            "SELECT * FROM pumping_items WHERE plan_id=? ORDER BY seq", (plan["id"],)
+        ).fetchall()]
+    if not items:
+        # seed from demands for date (aggregate plant+source)
+        dems = conn.execute(
+            "SELECT id, plant, source, omc, req FROM demands WHERE date=? ORDER BY source, plant",
+            (plan_date,),
+        ).fetchall()
+        # group by plant+source sum req
+        key = {}
+        for d in dems:
+            k = (d["source"], d["plant"])
+            if k not in key:
+                key[k] = {"allocation": 0, "demand_id": d["id"], "source": d["source"], "plant": d["plant"]}
+            key[k]["allocation"] += d["req"] or 0
+        seq = 1
+        for (source, plant), v in sorted(key.items(), key=lambda x: (x[0][0], x[0][1])):
+            items.append({
+                "seq": seq, "source": source, "plant": plant,
+                "allocation": round(v["allocation"], 3),
+                "flow_rate": 70, "manual_start": "", "start_time": "",
+                "duration_hrs": "", "completion_time": "", "notes": "",
+                "demand_id": v["demand_id"],
+            })
+            seq += 1
+        items = calc_plan_times(items)
+
+    # source totals
+    src_tot = {}
+    for it in items:
+        s = it["source"]
+        src_tot[s] = src_tot.get(s, 0) + float(it.get("allocation") or 0)
+
+    need_rem, rem_date = master_plan_reminder()
+    conn.close()
+    return render_template(
+        "pumping.html", user=user, plan_date=plan_date, items=items,
+        plan=dict(plan) if plan else None, src_tot=src_tot,
+        need_rem=need_rem, rem_date=rem_date,
+        SOURCES=SOURCES, PLANTS=PLANTS,
+    )
+
+
+@app.route("/pumping/pdf")
+@login_required
+def pumping_pdf():
+    user = current_user()
+    plan_date = request.args.get("date") or effective_date()
+    conn = get_db()
+    plan = conn.execute("SELECT * FROM pumping_plans WHERE plan_date=?", (plan_date,)).fetchone()
+    if not plan:
+        conn.close()
+        flash("No plan for this date", "error")
+        return redirect(url_for("pumping", date=plan_date))
+    items = [dict(r) for r in conn.execute(
+        "SELECT * FROM pumping_items WHERE plan_id=? ORDER BY seq", (plan["id"],)
+    ).fetchall()]
+    conn.close()
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=10*mm, rightMargin=10*mm, topMargin=10*mm, bottomMargin=10*mm)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("t", parent=styles["Heading1"], fontSize=13, textColor=colors.HexColor("#1F4E79"), spaceAfter=4)
+    story = []
+    try:
+        logo_path = os.path.join(_BASE_DIR, "static", "ihb_logo.png")
+        if os.path.isfile(logo_path):
+            story.append(RLImage(logo_path, width=35*mm, height=16*mm))
+            story.append(Spacer(1, 3))
+    except Exception:
+        pass
+    story.append(Paragraph("PUMPING SCHEDULE — MASTER PLAN & ALLOCATION", title_style))
+    story.append(Paragraph(f"Plan Date: {plan_date} &nbsp;|&nbsp; Status: {plan['status']} &nbsp;|&nbsp; Generated: {now_ist().strftime('%d-%b-%Y %H:%M IST')}", styles["Normal"]))
+    story.append(Spacer(1, 6))
+    header = ["Seq", "Source", "Plant", "Allocation (MT)", "Flow Rate (MT/hr)", "Manual Start", "Start Time", "Duration (hrs)", "Completion Time", "Notes"]
+    data = [header]
+    src_tot = {}
+    for it in items:
+        data.append([
+            str(it["seq"]), it["source"], it["plant"],
+            f"{float(it['allocation']):.2f}",
+            f"{float(it['flow_rate'] or 0):.0f}" if it.get("flow_rate") else "",
+            it.get("manual_start") or "",
+            it.get("start_time") or "",
+            f"{float(it['duration_hrs'] or 0):.2f}" if it.get("duration_hrs") else "",
+            it.get("completion_time") or "",
+            it.get("notes") or "",
+        ])
+        src_tot[it["source"]] = src_tot.get(it["source"], 0) + float(it["allocation"] or 0)
+    t = Table(data, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#70AD47")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#E2EFDA")),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 8))
+    sum_data = [["Source", "Total Allocation (MT)"]]
+    for s, tot in sorted(src_tot.items()):
+        sum_data.append([s, f"{tot:.2f}"])
+    sum_data.append(["GRAND TOTAL", f"{sum(src_tot.values()):.2f}"])
+    t2 = Table(sum_data)
+    t2.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E79")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+    ]))
+    story.append(Paragraph("<b>Source-wise totals</b>", styles["Normal"]))
+    story.append(Spacer(1, 3))
+    story.append(t2)
+    doc.build(story)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=f"Pumping_Schedule_{plan_date}.pdf", mimetype="application/pdf")
+
+
+@app.route("/schedule")
+@login_required
+def schedule_view():
+    """Plant/Source/Master view of published pumping schedule."""
+    user = current_user()
+    plan_date = request.args.get("date") or effective_date()
+    conn = get_db()
+    plan = conn.execute("SELECT * FROM pumping_plans WHERE plan_date=?", (plan_date,)).fetchone()
+    items = []
+    if plan and (plan["status"] == "published" or user["role"] == "master"):
+        q = "SELECT * FROM pumping_items WHERE plan_id=?"
+        params = [plan["id"]]
+        if user["role"] == "plant" and user.get("plant"):
+            q += " AND plant=?"
+            params.append(user["plant"])
+        if user["role"] == "source" and user.get("source"):
+            q += " AND source=?"
+            params.append(user["source"])
+        q += " ORDER BY seq"
+        items = [dict(r) for r in conn.execute(q, params).fetchall()]
+    # mark notifications read
+    conn.execute("UPDATE notifications SET read=1 WHERE user_id=?", (user["id"],))
+    conn.commit()
+    notes = unread_notifications(user)
+    conn.close()
+    return render_template(
+        "schedule.html", user=user, plan_date=plan_date,
+        plan=dict(plan) if plan else None, items=items,
+    )
+
+
+@app.route("/notifications")
+@login_required
+def notifications():
+    user = current_user()
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 50",
+        (user["id"],),
+    ).fetchall()
+    conn.execute("UPDATE notifications SET read=1 WHERE user_id=?", (user["id"],))
+    conn.commit()
+    conn.close()
+    return render_template("notifications.html", user=user, rows=[dict(r) for r in rows])
 
 
 @app.errorhandler(500)
